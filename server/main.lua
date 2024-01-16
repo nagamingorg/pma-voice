@@ -2,6 +2,17 @@ voiceData = {}
 radioData = {}
 callData = {}
 
+local mappedChannels = {}
+function firstFreeChannel()
+	for i = 1, 2048 do
+		if not mappedChannels[i] then
+			return i
+		end
+	end
+
+	return 0
+end
+
 function defaultTable(source)
 	handleStateBagInitilization(source)
 	return {
@@ -14,7 +25,7 @@ end
 
 function handleStateBagInitilization(source)
 	local plyState = Player(source).state
-	if not plyState.pmaVoiceInit then 
+	if not plyState.pmaVoiceInit then
 		plyState:set('radio', GetConvarInt('voice_defaultRadioVolume', 30), true)
 		plyState:set('call', GetConvarInt('voice_defaultCallVolume', 60), true)
 		plyState:set('submix', nil, true)
@@ -25,10 +36,18 @@ function handleStateBagInitilization(source)
 		-- We want to save voice inits because we'll automatically reinitalize calls and channels
 		plyState:set('pmaVoiceInit', true, false)
 	end
+
+	local assignedChannel = firstFreeChannel()
+	plyState:set('assignedChannel', assignedChannel, true)
+	if assignedChannel ~= 0 then
+		mappedChannels[assignedChannel] = source
+		logger.verbose('[reuse] Assigned %s to channel %s', source, assignedChannel)
+	else
+		logger.error('[reuse] Failed to find a free channel for %s', source)
+	end
 end
 
 CreateThread(function()
-
 	local plyTbl = GetPlayers()
 	for i = 1, #plyTbl do
 		local ply = tonumber(plyTbl[i])
@@ -49,29 +68,15 @@ CreateThread(function()
 		and _3dAudio == 'false'
 		and _2dAudio == 'false'
 	then
-		if gameVersion == 'fivem' then
-			SetConvarReplicated('voice_useNativeAudio', 'true')
-			if sendingRangeOnly == 'false' then
-				SetConvarReplicated('voice_useSendingRangeOnly', 'true')
-			end
-			logger.info('No convars detected for voice mode, defaulting to \'setr voice_useNativeAudio true\' and \'setr voice_useSendingRangeOnly true\'')
-		else
-			SetConvarReplicated('voice_use3dAudio', 'true')
-			if sendingRangeOnly == 'false' then
-				SetConvarReplicated('voice_useSendingRangeOnly', 'true')
-			end
-			logger.info('No convars detected for voice mode, defaulting to \'setr voice_use3dAudio true\' and \'setr voice_useSendingRangeOnly true\'')
+		SetConvarReplicated('voice_useNativeAudio', 'true')
+		if sendingRangeOnly == 'false' then
+			SetConvarReplicated('voice_useSendingRangeOnly', 'true')
+			logger.info(
+				'No convars detected for voice mode, defaulting to \'setr voice_useNativeAudio true\' and \'setr voice_useSendingRangeOnly true\'')
 		end
 	elseif sendingRangeOnly == 'false' then
-		logger.warn('It\'s recommended to have \'voice_useSendingRangeOnly\' set to true you can do that with \'setr voice_useSendingRangeOnly true\', this prevents players who directly join the mumble server from broadcasting to players.')
-	end
-
-	if GetConvar('gamename', 'fivem') == 'rdr3' then
-		if nativeAudio == 'true' then
-			logger.warn("RedM doesn't currently support native audio, automatically switching to 3d audio. This also means that submixes will not work.")
-			SetConvarReplicated('voice_useNativeAudio', 'false')
-			SetConvarReplicated('voice_use3dAudio', 'true')
-		end
+		logger.warn(
+			"It's recommended to have 'voice_useSendingRangeOnly' set to true you can do that with 'setr voice_useSendingRangeOnly true', this prevents players who directly join the mumble server from broadcasting to players.")
 	end
 
 	local radioVolume = GetConvarInt("voice_defaultRadioVolume", 30)
@@ -86,7 +91,8 @@ CreateThread(function()
 		SetConvarReplicated("voice_defaultCallVolume", 60)
 		for i = 1, 5 do
 			Wait(5000)
-			logger.warn("`voice_defaultRadioVolume` or `voice_defaultCallVolume` have their value set as a float, this is going to automatically be fixed but please update your convars.")
+			logger.warn(
+				"`voice_defaultRadioVolume` or `voice_defaultCallVolume` have their value set as a float, this is going to automatically be fixed but please update your convars.")
 		end
 	end
 end)
@@ -99,6 +105,8 @@ end)
 
 AddEventHandler("playerDropped", function()
 	local source = source
+	local mappedChannel = Player(source).state.assignedChannel
+
 	if voiceData[source] then
 		local plyData = voiceData[source]
 
@@ -111,6 +119,11 @@ AddEventHandler("playerDropped", function()
 		end
 
 		voiceData[source] = nil
+	end
+
+	if mappedChannel then
+		mappedChannels[mappedChannel] = nil
+		logger.verbose('[reuse] Unassigned %s from channel %s', source, mappedChannel)
 	end
 end)
 
@@ -126,6 +139,7 @@ end
 function isValidPlayer(source)
 	return voiceData[source]
 end
+
 exports('isValidPlayer', isValidPlayer)
 
 function getPlayersInRadioChannel(channel)
@@ -136,5 +150,6 @@ function getPlayersInRadioChannel(channel)
 	-- channel doesnt exist
 	return {}
 end
+
 exports('getPlayersInRadioChannel', getPlayersInRadioChannel)
 exports('GetPlayersInRadioChannel', getPlayersInRadioChannel)
